@@ -1170,6 +1170,7 @@ impl ContextProvider for ContextProviderWithTasks {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use settings::SettingsLocation;
 
     fn context_with_greeting(value: &str) -> TaskContext {
         TaskContext {
@@ -1277,5 +1278,78 @@ mod tests {
         let task_contexts = TaskContexts::default();
         let reresolved = task_contexts.reresolve_task(&TaskSourceKind::UserInput, &stale);
         assert_eq!(reresolved, stale);
+    }
+
+    #[test]
+    fn user_scenarios_by_adapter_filters_by_adapter_name() {
+        let mut inventory = Inventory {
+            last_scheduled_tasks: VecDeque::default(),
+            last_scheduled_scenarios: VecDeque::default(),
+            templates_from_settings: InventoryFor::default(),
+            scenarios_from_settings: InventoryFor::default(),
+        };
+
+        // Add a global debug scenario with adapter "node"
+        inventory
+            .update_file_based_scenarios(
+                TaskSettingsLocation::Global(std::path::Path::new("debug.json")),
+                Some(r#"[{"adapter": "node", "label": "Debug Node", "request": "launch"}]"#),
+            )
+            .unwrap();
+
+        // Add a worktree debug scenario with adapter "python"
+        let worktree_id = WorktreeId::from_usize(1);
+        let debug_json_path = RelPath::unix("debug.json").unwrap();
+        inventory
+            .update_file_based_scenarios(
+                TaskSettingsLocation::Worktree(SettingsLocation {
+                    worktree_id,
+                    path: debug_json_path,
+                }),
+                Some(r#"[{"adapter": "python", "label": "Debug Python", "request": "launch"}]"#),
+            )
+            .unwrap();
+
+        // Query for "node" — should only return the global scenario
+        let node_scenarios: Vec<_> = inventory
+            .user_scenarios_by_adapter(&DebugAdapterName("node".into()), Some(worktree_id))
+            .collect();
+        assert_eq!(
+            node_scenarios.len(),
+            1,
+            "should find the global node scenario"
+        );
+        assert_eq!(node_scenarios[0].label, "Debug Node");
+
+        // Query for "python" — should only return the worktree scenario
+        let python_scenarios: Vec<_> = inventory
+            .user_scenarios_by_adapter(&DebugAdapterName("python".into()), Some(worktree_id))
+            .collect();
+        assert_eq!(
+            python_scenarios.len(),
+            1,
+            "should find the worktree python scenario"
+        );
+        assert_eq!(python_scenarios[0].label, "Debug Python");
+
+        // Query for unknown adapter — should return nothing
+        let unknown: Vec<_> = inventory
+            .user_scenarios_by_adapter(&DebugAdapterName("unknown".into()), Some(worktree_id))
+            .collect();
+        assert!(
+            unknown.is_empty(),
+            "unknown adapter should yield no scenarios"
+        );
+
+        // Query without worktree_id — should only return global scenarios
+        let global_only: Vec<_> = inventory
+            .user_scenarios_by_adapter(&DebugAdapterName("node".into()), None)
+            .collect();
+        assert_eq!(
+            global_only.len(),
+            1,
+            "without worktree_id, only global scenarios are returned"
+        );
+        assert_eq!(global_only[0].label, "Debug Node");
     }
 }

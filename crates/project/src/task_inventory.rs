@@ -10,7 +10,7 @@ use std::{
 
 use anyhow::Result;
 use collections::{HashMap, HashSet, VecDeque};
-use dap::DapRegistry;
+use dap::{DapRegistry, adapters::DebugAdapterName};
 use gpui::{App, AppContext as _, Context, Entity, SharedString, Task, WeakEntity};
 use itertools::Itertools;
 use language::{
@@ -395,6 +395,25 @@ impl Inventory {
             }
             (last_scheduled_scenarios, scenarios)
         })
+    }
+
+    pub fn user_scenarios_by_adapter<'a>(
+        &'a self,
+        adapter: &'a DebugAdapterName,
+        worktree_id: Option<WorktreeId>,
+    ) -> impl Iterator<Item = DebugScenario> + 'a {
+        let worktree_scenarios = worktree_id
+            .into_iter()
+            .flat_map(|id| self.worktree_scenarios_from_settings(id))
+            .filter(|(_, scenario)| scenario.adapter == adapter.0)
+            .map(|(_, scenario)| scenario);
+
+        let global_scenarios = self
+            .global_debug_scenarios_from_settings()
+            .filter(|(_, scenario)| scenario.adapter == adapter.0)
+            .map(|(_, scenario)| scenario);
+
+        worktree_scenarios.chain(global_scenarios)
     }
 
     pub fn task_template_by_label(

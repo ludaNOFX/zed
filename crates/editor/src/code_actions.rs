@@ -421,6 +421,7 @@ impl Editor {
         maybe!({
             let project = self.project()?;
             let dap_store = project.read(cx).dap_store();
+            let task_store = project.read(cx).task_store().clone();
             let mut scenarios = vec![];
             let resolved_tasks = resolved_tasks.as_ref()?;
             let buffer = buffer.read(cx);
@@ -431,17 +432,31 @@ impl Editor {
                 .map(SharedString::from)
                 .or_else(|| language.config().debuggers.first().map(SharedString::from))?;
 
+            let worktree_id = buffer.file().map(|f| f.worktree_id(cx));
+            let adapter_name = dap::adapters::DebugAdapterName(debug_adapter.clone());
+
             dap_store.update(cx, |dap_store, cx| {
                 for (_, task) in &resolved_tasks.templates {
                     let maybe_scenario = dap_store.debug_scenario_for_build_task(
                         task.original_task().clone(),
-                        debug_adapter.clone().into(),
+                        adapter_name.clone(),
                         task.display_label().to_owned().into(),
                         cx,
                     );
                     scenarios.push(maybe_scenario);
                 }
             });
+
+            if let Some(inventory) = task_store.read(cx).task_inventory().cloned() {
+                let user_scenarios: Vec<_> = inventory
+                    .read(cx)
+                    .user_scenarios_by_adapter(&adapter_name, worktree_id)
+                    .collect();
+                for scenario in user_scenarios {
+                    scenarios.push(Task::ready(Some(scenario)));
+                }
+            }
+
             Some(cx.background_spawn(async move {
                 futures::future::join_all(scenarios)
                     .await
